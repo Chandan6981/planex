@@ -1,0 +1,43 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# ── Environment variables (NEVER push these) ──────────────────────────────────
+.env
+.env.local
+.env.production
+server/.env
+client/.env
+
+# ── Build output ──────────────────────────────────────────────────────────────
+client/build/
+client/dist/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# ── OS files ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE files ─────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.suo
+*.user
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+.cache/
+client/.cache/
+node_modules/.cache/
+server/node_modules/.cache/
+
+# ── Uploads (local files, use S3 in production) ───────────────────────────────
+server/uploads/*
+!server/uploads/.gitkeep
