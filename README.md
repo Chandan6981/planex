@@ -1,7 +1,5 @@
 # PlanEx — Project Management App
 
-[![CodeFactor](https://www.codefactor.io/repository/github/YOUR_USERNAME/planex/badge)](https://www.codefactor.io/repository/github/YOUR_USERNAME/planex)
-
 A production-ready full-stack project management application built with the MERN stack. Features real-time collaboration, Kanban boards with custom columns, role-based task permissions, analytics, offline support, voice-to-text input, audio comments via AWS S3, async email notifications via AWS SQS, and a comprehensive REST API with MongoDB aggregation pipelines.
 
 ---
