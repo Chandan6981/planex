@@ -3,11 +3,51 @@ const { TASK_STATUS } = require('../constants');
 const Task    = require('../models/Task');
 const Project = require('../models/Project');
 
+// ── Simple in-memory cache (5 minute TTL) ─────────────────────────────────────
+// Avoids re-running heavy aggregations on every page load
+// Cache is per-user and auto-expires — no stale data risk beyond 5 minutes
+const cache     = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const getCached = (key) => {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data;
+};
+
+const setCache = (key, data) => {
+  // Prevent unbounded cache growth — max 500 entries
+  if (cache.size >= 500) {
+    const firstKey = cache.keys().next().value;
+    cache.delete(firstKey);
+  }
+  cache.set(key, { data, timestamp: Date.now() });
+};
+
+// Call this when tasks change to invalidate user's analytics cache
+const invalidateCache = (userId) => {
+  const uid = userId.toString();
+  for (const key of cache.keys()) {
+    if (key.startsWith(uid)) cache.delete(key);
+  }
+};
+
+module.exports.invalidateCache = invalidateCache;
+
 // ── GET /api/analytics/personal ──────────────────────────────────────────────
 const getPersonalAnalytics = async (req, res, next) => {
   try {
     const userId    = new mongoose.Types.ObjectId(req.user._id);
     const userIdStr = req.user._id.toString();
+
+    // Check cache first
+    const cacheKey = `${userIdStr}:personal`;
+    const cached   = getCached(cacheKey);
+    if (cached) return res.json(cached);
 
     const now   = new Date();
     const day0  = new Date(now); day0.setHours(0,0,0,0);
@@ -98,7 +138,7 @@ const getPersonalAnalytics = async (req, res, next) => {
       ? Math.round(avgTimeResult[0].avg * 10) / 10
       : 0;
 
-    res.json({
+    const response = {
       stats: {
         totalTasks,
         completedTasks,
@@ -110,7 +150,10 @@ const getPersonalAnalytics = async (req, res, next) => {
       completedOverTime,
       priorityBreakdown,
       productivityByDay,
-    });
+    };
+
+    setCache(cacheKey, response);
+    res.json(response);
   } catch (err) { next(err); }
 };
 
@@ -118,6 +161,10 @@ const getPersonalAnalytics = async (req, res, next) => {
 const getProjectAnalytics = async (req, res, next) => {
   try {
     const projectId = new mongoose.Types.ObjectId(req.params.id);
+
+    const cacheKey = `${req.user._id}:project:${req.params.id}`;
+    const cached   = getCached(cacheKey);
+    if (cached) return res.json(cached);
 
     const now   = new Date();
     const day0  = new Date(now); day0.setHours(0,0,0,0);
@@ -186,7 +233,7 @@ const getProjectAnalytics = async (req, res, next) => {
       Task.countDocuments({ project: projectId, status: { $ne: TASK_STATUS.DONE }, dueDate: { $lt: day0 } }),
     ]);
 
-    res.json({
+    const response = {
       stats: {
         total, done, overdue,
         active: total - done,
@@ -195,7 +242,10 @@ const getProjectAnalytics = async (req, res, next) => {
       burnDown,
       velocity,
       memberContribution,
-    });
+    };
+
+    setCache(cacheKey, response);
+    res.json(response);
   } catch (err) { next(err); }
 };
 

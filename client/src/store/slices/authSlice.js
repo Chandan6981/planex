@@ -4,6 +4,8 @@ import api from '../../utils/api';
 export const login = createAsyncThunk('auth/login', async (credentials, { rejectWithValue }) => {
   try {
     const res = await api.post('/auth/login', credentials);
+    // Server sets httpOnly refreshToken cookie automatically
+    // We only store the short-lived accessToken in localStorage
     localStorage.setItem('token', res.data.token);
     return res.data;
   } catch (err) {
@@ -40,18 +42,30 @@ export const updateTheme = createAsyncThunk('auth/updateTheme', async (theme, { 
   }
 });
 
+// Calls server to clear the httpOnly refreshToken cookie
+// then clears local state — proper full logout
+export const logoutUser = createAsyncThunk('auth/logoutUser', async (_, { dispatch }) => {
+  try {
+    await api.post('/auth/logout'); // clears httpOnly cookie server-side
+  } catch {
+    // Even if server call fails — clear client state anyway
+  }
+  localStorage.removeItem('token');
+  dispatch(logout());
+});
+
 const authSlice = createSlice({
   name: 'auth',
   initialState: {
-    user: null,
-    token: localStorage.getItem('token'),
-    loading: false,
+    user:        null,
+    token:       localStorage.getItem('token'),
+    loading:     false,
     initialized: false,
-    error: null,
+    error:       null,
   },
   reducers: {
     logout: (state) => {
-      state.user = null;
+      state.user  = null;
       state.token = null;
       localStorage.removeItem('token');
     },
@@ -62,45 +76,57 @@ const authSlice = createSlice({
     addNotification: (state, action) => {
       if (state.user) {
         if (!state.user.notifications) state.user.notifications = [];
-        state.user.notifications.unshift({ ...action.payload, read: false, createdAt: new Date().toISOString() });
+        // Cap notifications in Redux state at 50 too
+        state.user.notifications.unshift({
+          ...action.payload,
+          read:      false,
+          createdAt: new Date().toISOString()
+        });
+        if (state.user.notifications.length > 50) {
+          state.user.notifications = state.user.notifications.slice(0, 50);
+        }
       }
     }
   },
   extraReducers: (builder) => {
     builder
-      .addCase(login.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(login.pending,   (state) => { state.loading = true;  state.error = null; })
       .addCase(login.fulfilled, (state, action) => {
         state.loading = false;
-        state.user = action.payload.user;
-        state.token = action.payload.token;
+        state.user    = action.payload.user;
+        state.token   = action.payload.token;
       })
-      .addCase(login.rejected, (state, action) => {
+      .addCase(login.rejected,  (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error   = action.payload;
       })
-      .addCase(register.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(register.pending,   (state) => { state.loading = true;  state.error = null; })
       .addCase(register.fulfilled, (state, action) => {
         state.loading = false;
-        state.user = action.payload.user;
-        state.token = action.payload.token;
+        state.user    = action.payload.user;
+        state.token   = action.payload.token;
       })
-      .addCase(register.rejected, (state, action) => {
+      .addCase(register.rejected,  (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error   = action.payload;
       })
-      .addCase(loadUser.pending, (state) => { state.loading = true; })
+      .addCase(loadUser.pending,   (state) => { state.loading = true; })
       .addCase(loadUser.fulfilled, (state, action) => {
-        state.loading = false;
+        state.loading     = false;
         state.initialized = true;
-        state.user = action.payload;
+        state.user        = action.payload;
       })
-      .addCase(loadUser.rejected, (state) => {
-        state.loading = false;
+      .addCase(loadUser.rejected,  (state) => {
+        state.loading     = false;
         state.initialized = true;
-        state.token = null;
+        state.token       = null;
       })
       .addCase(updateTheme.fulfilled, (state, action) => {
         if (state.user) state.user.theme = action.payload;
+      })
+      .addCase(logoutUser.fulfilled, (state) => {
+        state.user  = null;
+        state.token = null;
       });
   }
 });

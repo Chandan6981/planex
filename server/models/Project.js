@@ -38,12 +38,4 @@ projectSchema.pre('save', function(next) {
   next();
 });
 
-// Virtual for task count
-projectSchema.virtual('taskCount', {
-  ref: 'Task',
-  localField: '_id',
-  foreignField: 'project',
-  count: true
-});
-
 module.exports = mongoose.model('Project', projectSchema);

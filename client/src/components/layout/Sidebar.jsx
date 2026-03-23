@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { logout } from '../../store/slices/authSlice';
+import { logout, logoutUser } from '../../store/slices/authSlice';
 import { setCreateProjectModal } from '../../store/slices/uiSlice';
 import { getInitials } from '../../utils/helpers';
 import { PlanExIcon } from '../common/PlanExLogo';
@@ -26,7 +26,7 @@ export default function Sidebar() {
 
       {/* Main nav */}
       <div className="sidebar-section" style={{ marginTop: 6 }}>
-         <NavLink to="/search" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <NavLink to="/search" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -34,6 +34,7 @@ export default function Sidebar() {
           </span>
           Search
         </NavLink>
+
         <NavLink to="/dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -53,8 +54,6 @@ export default function Sidebar() {
           My Tasks
         </NavLink>
 
-       
-
         <NavLink to="/analytics" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -69,7 +68,7 @@ export default function Sidebar() {
       {/* ── OWNED PROJECTS ── */}
       <div className="sidebar-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px 0 8px', marginBottom: 2 }}>
-          <span className="sidebar-section-label" style={{ padding: 0 }}>My Workspace</span>
+          <span className="sidebar-section-label" style={{ padding: 0 }}>My Projects</span>
           <div style={{ display: 'flex', gap: 2 }}>
             <button className="btn-icon" style={{ width: 20, height: 20, padding: 0, fontSize: '11px' }}
               onClick={() => setOwnedExpanded(v => !v)}>
@@ -156,7 +155,7 @@ export default function Sidebar() {
             </div>
           </div>
           <button className="btn-icon" style={{ flexShrink: 0 }}
-            onClick={e => { e.stopPropagation(); dispatch(logout()); navigate('/login'); }}
+            onClick={e => { e.stopPropagation(); dispatch(logoutUser()); navigate('/login'); }}
             title="Sign out">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>

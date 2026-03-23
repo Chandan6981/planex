@@ -2,6 +2,7 @@ const express       = require('express');
 const router        = express.Router();
 const auth          = require('../middleware/auth');
 const validateObjId = require('../middleware/validateObjectId');
+const { sanitizeProject } = require('../middleware/sanitize');
 const {
   getAllProjects, createProject, getProject,
   updateProject, deleteProject, addMember,
@@ -10,11 +11,11 @@ const {
 const { validateCreateProject, validateUpdateProject } = require('../validators/projectValidator');
 
 router.get ('/',                  auth, getAllProjects);
-router.post('/',                  auth, validateCreateProject, createProject);
+router.post('/',                  auth, validateCreateProject, sanitizeProject, createProject);
 // IMPORTANT: /assigned must be before /:id to avoid conflict
 router.get ('/assigned',          auth, getAssignedProjects);
 router.get ('/:id',               auth, validateObjId, getProject);
-router.put ('/:id',               auth, validateObjId, validateUpdateProject, updateProject);
+router.put ('/:id',               auth, validateObjId, validateUpdateProject, sanitizeProject, updateProject);
 router.delete('/:id',             auth, validateObjId, deleteProject);
 router.post('/:id/members',       auth, validateObjId, addMember);
 router.get ('/:id/stats',         auth, validateObjId, getProjectStats);

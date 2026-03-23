@@ -4,13 +4,14 @@ const socketIo   = require('socket.io');
 const mongoose   = require('mongoose');
 const cors       = require('cors');
 const helmet     = require('helmet');
+const cookies    = require('cookie-parser');
 const dotenv     = require('dotenv');
 const path       = require('path');
 
 dotenv.config();
 
 // ── Validate required env variables on startup ────────────────────────────────
-const REQUIRED_ENV = ['MONGO_URI', 'JWT_SECRET'];
+const REQUIRED_ENV = ['MONGO_URI', 'JWT_SECRET', 'REFRESH_TOKEN_SECRET'];
 REQUIRED_ENV.forEach(key => {
   if (!process.env[key]) {
     console.error(`❌ Missing required env variable: ${key}`);
@@ -34,6 +35,7 @@ app.use(cors({
   origin:      process.env.CLIENT_URL || 'http://localhost:3000',
   credentials: true
 }));
+app.use(cookies());                       // parse httpOnly cookies for refresh token
 app.use(express.json({ limit: '10kb' })); // reject large payloads
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
