@@ -87,8 +87,10 @@ function AppRouter() {
   const { token, initialized, user } = useSelector(s => s.auth);
 
   useEffect(() => {
-    if (token && !user) dispatch(loadUser());
-  }, [token, dispatch, user]);
+    // Only call loadUser on page refresh (token exists but user not in Redux yet)
+    // After fresh login, initialized=true so this is skipped
+    if (token && !user && !initialized) dispatch(loadUser());
+  }, [token, dispatch, user, initialized]);
 
   if (token && !initialized) {
     return (

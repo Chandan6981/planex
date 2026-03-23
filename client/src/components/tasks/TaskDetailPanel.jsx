@@ -48,6 +48,40 @@ export default function TaskDetailPanel({ taskId }) {
   const [activeTab,    setActiveTab]    = useState('details');
   const [allUsers,       setAllUsers]       = useState([]);
   const [assigneeSearch, setAssigneeSearch] = useState('');
+
+  // ── Local form state for editable fields (prevents auto-save on every keystroke) ──
+  const [localForm, setLocalForm] = useState({ description: '', dueDate: '', estimatedHours: '' });
+  const [isDirty,   setIsDirty]   = useState(false);
+  const [saving,    setSaving]    = useState(false);
+
+  // Sync localForm when task loads or changes
+  useEffect(() => {
+    if (task) {
+      setLocalForm({
+        description:    task.description    || '',
+        dueDate:        task.dueDate ? task.dueDate.split('T')[0] : '',
+        estimatedHours: task.estimatedHours || '',
+      });
+      setIsDirty(false);
+    }
+  }, [task?._id]); // only reset when task ID changes, not on every update
+
+  const setField = (field, value) => {
+    setLocalForm(prev => ({ ...prev, [field]: value }));
+    setIsDirty(true);
+  };
+
+  const handleSaveChanges = async () => {
+    if (!isDirty) return;
+    setSaving(true);
+    await dispatch(updateTask({ id: task._id, data: {
+      description:    localForm.description,
+      dueDate:        localForm.dueDate || null,
+      estimatedHours: localForm.estimatedHours || null,
+    }}));
+    setSaving(false);
+    setIsDirty(false);
+  };
   const [showPicker,     setShowPicker]     = useState(false);
   const [uploading,    setUploading]    = useState(false);
   const [uploadError,  setUploadError]  = useState('');
@@ -223,15 +257,24 @@ export default function TaskDetailPanel({ taskId }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
             <div style={{ flex: 1 }}>
               {editingTitle && canEdit ? (
-                <input className="input" value={titleVal} onChange={e => setTitleVal(e.target.value)}
-                  onBlur={handleTitleSave} onKeyDown={e => e.key === 'Enter' && handleTitleSave()}
-                  autoFocus style={{ fontSize: '1rem', fontWeight: 600 }} />
+                <div>
+                  <input className="input" value={titleVal} onChange={e => setTitleVal(e.target.value)}
+                    onBlur={handleTitleSave}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleTitleSave();
+                      if (e.key === 'Escape') { setTitleVal(task.title); setEditingTitle(false); }
+                    }}
+                    autoFocus style={{ fontSize: '1rem', fontWeight: 600 }} />
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 3 }}>
+                    Enter to save · Esc to cancel
+                  </div>
+                </div>
               ) : (
                 <h3 style={{ fontSize: '1.1rem', lineHeight: 1.4,
                   cursor: canEdit ? 'pointer' : 'default',
                   wordBreak: 'break-word' }}
                   onClick={() => canEdit && setEditingTitle(true)}
-                  title={canEdit ? 'Click to edit' : ''}>
+                  title={canEdit ? 'Click to edit title' : ''}>
                   {task.title}
                 </h3>
               )}
@@ -244,13 +287,25 @@ export default function TaskDetailPanel({ taskId }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <select className="input" style={{ width: 'auto', padding: '4px 28px 4px 8px', fontSize: '0.78rem' }}
-              value={task.status} onChange={e => update({ status: e.target.value, column: e.target.value })}>
-              <option value="todo">To Do</option>
-              <option value="inprogress">In Progress</option>
-              <option value="review">In Review</option>
-              <option value="done">Done</option>
-            </select>
+            {/* Status dropdown — shows all project columns including custom ones */}
+            {(() => {
+              const projectColumns = task.project?.columns
+                ? [...task.project.columns].sort((a, b) => (a.order || 0) - (b.order || 0))
+                : [
+                    { id: 'todo',       name: 'To Do' },
+                    { id: 'inprogress', name: 'In Progress' },
+                    { id: 'review',     name: 'In Review' },
+                    { id: 'done',       name: 'Done' },
+                  ];
+              return (
+                <select className="input" style={{ width: 'auto', padding: '4px 28px 4px 8px', fontSize: '0.78rem' }}
+                  value={task.status} onChange={e => update({ status: e.target.value, column: e.target.value })}>
+                  {projectColumns.map(col => (
+                    <option key={col.id} value={col.id}>{col.name}</option>
+                  ))}
+                </select>
+              );
+            })()}
             <select className="input" style={{ width: 'auto', padding: '4px 28px 4px 8px', fontSize: '0.78rem' }}
               value={task.priority}
               disabled={!canEdit}
@@ -298,8 +353,8 @@ export default function TaskDetailPanel({ taskId }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
                 <div className="input-label" style={{ marginBottom: 6 }}>Description</div>
-                <textarea className="input" value={task.description || ''}
-                  onChange={e => canEdit && update({ description: e.target.value })}
+                <textarea className="input" value={localForm.description}
+                  onChange={e => canEdit && setField('description', e.target.value)}
                   placeholder={canEdit ? 'Add a description...' : 'No description'}
                   rows={4}
                   readOnly={!canEdit}
@@ -309,18 +364,39 @@ export default function TaskDetailPanel({ taskId }) {
                 <div>
                   <div className="input-label" style={{ marginBottom: 6 }}>Due Date</div>
                   <input className="input" type="date"
-                    value={task.dueDate ? task.dueDate.split('T')[0] : ''}
-                    onChange={e => canEdit && update({ dueDate: e.target.value })}
+                    value={localForm.dueDate}
+                    onChange={e => canEdit && setField('dueDate', e.target.value)}
                     disabled={!canEdit} />
                 </div>
                 <div>
                   <div className="input-label" style={{ marginBottom: 6 }}>Estimated Hours</div>
-                  <input className="input" type="number" value={task.estimatedHours || ''}
+                  <input className="input" type="number" value={localForm.estimatedHours}
                     placeholder="0" min="0"
-                    onChange={e => canEdit && update({ estimatedHours: e.target.value })}
+                    onChange={e => canEdit && setField('estimatedHours', e.target.value)}
                     disabled={!canEdit} />
                 </div>
               </div>
+
+              {/* Save Changes button — only shown when there are unsaved changes */}
+              {canEdit && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleSaveChanges}
+                    disabled={!isDirty || saving}
+                    style={{ opacity: isDirty ? 1 : 0.45 }}>
+                    {saving
+                      ? <><span className="spinner" style={{ width: 11, height: 11 }} /> Saving…</>
+                      : isDirty ? '💾 Save Changes' : '✓ Saved'
+                    }
+                  </button>
+                  {isDirty && (
+                    <span style={{ fontSize: '0.7rem', color: 'var(--yellow)' }}>
+                      ● Unsaved changes
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Assignees */}
               <div>
