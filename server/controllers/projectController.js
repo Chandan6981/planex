@@ -3,6 +3,7 @@ const { emitProject }  = require('../socket/socketHelpers');
 const { TASK_STATUS }  = require('../constants');
 const Project  = require('../models/Project');
 const Task     = require('../models/Task');
+const { deleteFile } = require('../services/s3Service');
 
 const POPULATE_USER = 'name email color avatar';
 
@@ -103,6 +104,8 @@ const updateProject = async (req, res, next) => {
 };
 
 const deleteProject = async (req, res, next) => {
+  
+  const session = await mongoose.startSession();
   try {
     const project = await Project.findById(req.params.id);
     if (!project) return res.status(404).json({ message: 'Project not found' });
@@ -111,10 +114,28 @@ const deleteProject = async (req, res, next) => {
     if (project.owner.toString() !== req.user._id.toString())
       return res.status(403).json({ message: 'Only the project owner can delete it' });
 
-    await Project.findByIdAndDelete(req.params.id);
-    await Task.deleteMany({ project: req.params.id });
+    // Collect all S3 attachment URLs before deletion so we can clean up after
+    const tasks = await Task.find({ project: req.params.id }).select('attachments comments').lean();
+    const s3Urls = [];
+    tasks.forEach(t => {
+      (t.attachments || []).forEach(a => { if (a.url) s3Urls.push(a.url); });
+      (t.comments    || []).forEach(c => { if (c.isVoice && c.audioUrl) s3Urls.push(c.audioUrl); });
+    });
+
+    await session.withTransaction(async () => {
+      await Task.deleteMany({ project: req.params.id }, { session });
+      await Project.findByIdAndDelete(req.params.id, { session });
+    });
+
+    // Clean up S3 files AFTER transaction commits
+    // Non-critical: if S3 delete fails, DB is still consistent
+    for (const url of s3Urls) {
+      await deleteFile(url).catch(e => console.error('S3 cleanup error:', e.message));
+    }
+
     res.json({ message: 'Project deleted' });
   } catch (err) { next(err); }
+  finally { session.endSession(); }
 };
 
 const addMember = async (req, res, next) => {
@@ -272,7 +293,7 @@ const updateColumns = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ── GET /api/projects/assigned ────────────────────────────────────────────────
+// ── GET /api/projects/assigned
 const getAssignedProjects = async (req, res, next) => {
   try {
     const userId    = new mongoose.Types.ObjectId(req.user._id);

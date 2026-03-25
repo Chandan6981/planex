@@ -12,9 +12,9 @@ const toObjId = id => new ObjectId(id.toString());
 
 // Consistent populate fields — defined once, used everywhere
 const POPULATE_USER    = 'name email color avatar';
-const POPULATE_PROJECT = 'name color icon owner members';
+const POPULATE_PROJECT = 'name color icon owner members columns';
 
-//Permission helper
+// ── Permission helper ─────────────────────────────────────────────────────────
 // Returns 'owner' | 'assignee' | 'none'
 // 'owner'    → task creator, project owner, project admin — full access
 // 'assignee' → assigned to task but not creator/owner — restricted access
@@ -45,7 +45,7 @@ const getTaskPermission = (task, userId, project) => {
 const OWNER_ONLY_FIELDS = ['title', 'description', 'assignees', 'priority', 'dueDate', 'estimatedHours', 'tags', 'isRecurring', 'recurringPattern'];
 
 
-//GET /tasks
+// ── GET /tasks ────────────────────────────────────────────────────────────────
 const getAllTasks = async (req, res, next) => {
   try {
     const filter = {};
@@ -90,7 +90,7 @@ const getAllTasks = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//GET /tasks/:id
+// ── GET /tasks/:id ────────────────────────────────────────────────────────────
 const getTask = async (req, res, next) => {
   try {
     const task = await Task.findById(req.params.id)
@@ -110,8 +110,12 @@ const getTask = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//POST /tasks
+// ── POST /tasks ───────────────────────────────────────────────────────────────
 const createTask = async (req, res, next) => {
+  // Use a transaction so task creation + notification updates are atomic.
+  // If notification update fails mid-loop, the task is rolled back too —
+  // no orphaned tasks without notifications.
+  const session = await mongoose.startSession();
   try {
     const assigneeSet = [...new Set([
       req.user._id.toString(),
@@ -119,50 +123,56 @@ const createTask = async (req, res, next) => {
     ])];
     const assignees = assigneeSet.map(toObjId);
 
-    const task = new Task({
-      ...req.body,
-      assignees,
-      project:   req.body.project || null,
-      createdBy: req.user._id
+    let task;
+    await session.withTransaction(async () => {
+      const tasks = await Task.create([{
+        ...req.body,
+        assignees,
+        project:   req.body.project || null,
+        createdBy: req.user._id
+      }], { session });
+      task = tasks[0];
+
+      // Update all assignee notifications inside the same transaction
+      for (const assigneeId of assignees) {
+        if (assigneeId.toString() === req.user._id.toString()) continue;
+        await User.findByIdAndUpdate(assigneeId, {
+          $push: { notifications: {
+            $each:  [{ message: `${req.user.name} assigned you to "${req.body.title}"`, type: NOTIFICATION_TYPE.TASK, link: `/tasks/${task._id}`, createdAt: new Date(), read: false }],
+            $slice: -50
+          }}
+        }, { session });
+      }
     });
-    await task.save();
+
+    // Populate after transaction commits — populate doesn't support sessions
     await task.populate('assignees', POPULATE_USER);
     await task.populate('createdBy', POPULATE_USER);
     await task.populate('project',   POPULATE_PROJECT);
 
-    // Notify other assignees — socket (instant) + SQS email (async, non-blocking)
+    // Socket + SQS outside transaction — these are non-DB side effects
     for (const a of task.assignees) {
       if (a._id.toString() === req.user._id.toString()) continue;
-
-      await User.findByIdAndUpdate(a._id, {
-        $push: { notifications: {
-          message: `${req.user.name} assigned you to "${task.title}"`,
-          type:    NOTIFICATION_TYPE.TASK,
-          link:    `/tasks/${task._id}`
-        }}
-      });
-
       req.io.to(`user:${a._id}`).emit('notification:new', {
         message: `${req.user.name} assigned you to "${task.title}"`,
         type:    NOTIFICATION_TYPE.TASK
       });
-
-      // Async email via SQS — never blocks the API response
       await pushToQueue(QUEUE_EVENTS.TASK_ASSIGNED, {
         to:           a.email,
         toName:       a.name,
         assignerName: req.user.name,
         taskTitle:    task.title,
         taskId:       task._id.toString()
-      });
+      }, a._id.toString());
     }
 
     emitTask(req.io, 'task:created', task);
     res.status(201).json(task);
   } catch (err) { next(err); }
+  finally { session.endSession(); }
 };
 
-// PUT /tasks/bulk/update
+// ── PUT /tasks/bulk/update ────────────────────────────────────────────────────
 const bulkUpdateTasks = async (req, res, next) => {
   try {
     const { taskIds, update } = req.body;
@@ -174,7 +184,7 @@ const bulkUpdateTasks = async (req, res, next) => {
       return res.status(400).json({ message: 'Cannot bulk update more than 100 tasks at once' });
 
     // Whitelist — never allow sensitive fields to be bulk-changed
-    const ALLOWED = ['status', 'priority', 'column', 'dueDate', 'assignees'];
+    const ALLOWED = ['status', 'priority', 'column', 'dueDate'];
     const safeUpdate = {};
     for (const key of Object.keys(update || {})) {
       if (ALLOWED.includes(key)) safeUpdate[key] = update[key];
@@ -183,7 +193,35 @@ const bulkUpdateTasks = async (req, res, next) => {
     if (Object.keys(safeUpdate).length === 0)
       return res.status(400).json({ message: 'No valid fields to update' });
 
+    // ── Authorization check — fetch all tasks and verify permission for each ──
+    // This prevents any authenticated user from modifying tasks they have no
+    // access to by submitting arbitrary task IDs.
+    const tasksToCheck = await Task.find({ _id: { $in: taskIds } })
+      .populate('project', 'name owner members')
+      .lean();
+
+    // Verify every requested ID was actually found
+    if (tasksToCheck.length !== taskIds.length) {
+      const foundIds  = new Set(tasksToCheck.map(t => t._id.toString()));
+      const missingId = taskIds.find(id => !foundIds.has(id.toString()));
+      return res.status(404).json({ message: `Task not found: ${missingId}` });
+    }
+
+    // Check permission on every task — must be owner or assignee
+    const unauthorizedTask = tasksToCheck.find(task => {
+      const perm = getTaskPermission(task, req.user._id, task.project);
+      return perm === 'none';
+    });
+
+    if (unauthorizedTask) {
+      return res.status(403).json({
+        message: `You do not have access to task: ${unauthorizedTask._id}`
+      });
+    }
+
+    // All tasks verified — perform the update
     await Task.updateMany({ _id: { $in: taskIds } }, { $set: safeUpdate });
+
     const tasks = await Task.find({ _id: { $in: taskIds } })
       .populate('assignees', POPULATE_USER)
       .populate('project',   POPULATE_PROJECT);
@@ -193,7 +231,7 @@ const bulkUpdateTasks = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//PUT /tasks/:id
+// ── PUT /tasks/:id ────────────────────────────────────────────────────────────
 const updateTask = async (req, res, next) => {
   try {
     const oldTask = await Task.findById(req.params.id)
@@ -201,7 +239,7 @@ const updateTask = async (req, res, next) => {
       .populate('project',   'name owner members');
     if (!oldTask) return res.status(404).json({ message: 'Task not found' });
 
-    //Permission check
+    // ── Permission check ──────────────────────────────────────────────────
     const perm = getTaskPermission(oldTask, req.user._id, oldTask.project);
     if (perm === 'none')
       return res.status(403).json({ message: 'You do not have access to this task' });
@@ -262,9 +300,8 @@ const updateTask = async (req, res, next) => {
       const assignee = task.assignees.find(a => (a._id || a).toString() === uid);
       await User.findByIdAndUpdate(uid, {
         $push: { notifications: {
-          message: `${req.user.name} assigned you to "${task.title}"`,
-          type:    NOTIFICATION_TYPE.TASK,
-          link:    `/tasks/${task._id}`
+          $each:  [{ message: `${req.user.name} assigned you to "${task.title}"`, type: NOTIFICATION_TYPE.TASK, link: `/tasks/${task._id}`, createdAt: new Date(), read: false }],
+          $slice: -50  // keep only latest 50 notifications
         }}
       });
       req.io.to(`user:${uid}`).emit('notification:new', {
@@ -279,7 +316,7 @@ const updateTask = async (req, res, next) => {
           assignerName: req.user.name,
           taskTitle:    task.title,
           taskId:       task._id.toString()
-        });
+        }, assignee._id.toString());
       }
     }
 
@@ -288,7 +325,7 @@ const updateTask = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//DELETE /tasks/:id
+// ── DELETE /tasks/:id ─────────────────────────────────────────────────────────
 const deleteTask = async (req, res, next) => {
   try {
     const task = await Task.findById(req.params.id)
@@ -320,7 +357,7 @@ const deleteTask = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//POST /tasks/:id/comments
+// ── POST /tasks/:id/comments ──────────────────────────────────────────────────
 const addComment = async (req, res, next) => {
   try {
     const { text, isVoice, audioUrl } = req.body;
@@ -362,7 +399,7 @@ const addComment = async (req, res, next) => {
           taskTitle:     task.title,
           taskId:        task._id.toString(),
           commentText:   text.trim()
-        });
+        }, a._id.toString());
       }
     }
 
@@ -371,7 +408,7 @@ const addComment = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//POST /tasks/:id/comments/voice — upload audio then save comment
+// ── POST /tasks/:id/comments/voice — upload audio then save comment ───────────
 const addVoiceComment = async (req, res, next) => {
   try {
     if (!req.file)
@@ -407,7 +444,7 @@ const addVoiceComment = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//DELETE /tasks/:id/comments/:commentId
+// ── DELETE /tasks/:id/comments/:commentId ─────────────────────────────────────
 const deleteComment = async (req, res, next) => {
   try {
     const task = await Task.findById(req.params.id);
@@ -506,7 +543,7 @@ const deleteAttachment = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//PUT /tasks/:id/subtasks/:subtaskId
+// ── PUT /tasks/:id/subtasks/:subtaskId ────────────────────────────────────────
 const updateSubtask = async (req, res, next) => {
   try {
     const task = await Task.findOneAndUpdate(
@@ -521,7 +558,7 @@ const updateSubtask = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-//POST /tasks/:id/subtasks
+// ── POST /tasks/:id/subtasks ──────────────────────────────────────────────────
 const addSubtask = async (req, res, next) => {
   try {
     const task = await Task.findByIdAndUpdate(

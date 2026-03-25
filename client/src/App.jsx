@@ -19,7 +19,8 @@ import CreateProjectModal from './components/projects/CreateProjectModal';
 import CreateTaskModal    from './components/tasks/CreateTaskModal';
 import TaskDetailPanel    from './components/tasks/TaskDetailPanel';
 import Toast              from './components/ui/Toast';
-import AnalyticsPage          from './components/analytics/AnalyticsPage';
+import AnalyticsPage      from './components/analytics/AnalyticsPage';
+import ErrorBoundary      from './components/common/ErrorBoundary';
 
 import './styles/globals.css';
 
@@ -63,20 +64,22 @@ function ProtectedLayout() {
 
   return (
     <div className="app-layout">
-      <Sidebar />
+      <ErrorBoundary section="Sidebar">
+        <Sidebar />
+      </ErrorBoundary>
       <main className="main-content">
         <Routes>
-          <Route path="/dashboard"      element={<Dashboard />} />
-          <Route path="/my-tasks"       element={<MyTasks />} />
-          <Route path="/projects/:id"   element={<ProjectPage />} />
-          <Route path="/search"         element={<SearchPage />} />
-          <Route path="/analytics"      element={<AnalyticsPage />} />
-          <Route path="*"               element={<Navigate to="/dashboard" />} />
+          <Route path="/dashboard"    element={<ErrorBoundary section="Dashboard"><Dashboard /></ErrorBoundary>} />
+          <Route path="/my-tasks"     element={<ErrorBoundary section="My Tasks"><MyTasks /></ErrorBoundary>} />
+          <Route path="/projects/:id" element={<ErrorBoundary section="Project"><ProjectPage /></ErrorBoundary>} />
+          <Route path="/search"       element={<ErrorBoundary section="Search"><SearchPage /></ErrorBoundary>} />
+          <Route path="/analytics"    element={<ErrorBoundary section="Analytics"><AnalyticsPage /></ErrorBoundary>} />
+          <Route path="*"             element={<Navigate to="/dashboard" />} />
         </Routes>
       </main>
-      {createProjectModal && <CreateProjectModal />}
-      {createTaskModal    && <CreateTaskModal />}
-      {taskDetailPanel    && <TaskDetailPanel taskId={taskDetailPanel} />}
+      {createProjectModal && <ErrorBoundary section="Create Project"><CreateProjectModal /></ErrorBoundary>}
+      {createTaskModal    && <ErrorBoundary section="Create Task"><CreateTaskModal /></ErrorBoundary>}
+      {taskDetailPanel    && <ErrorBoundary section="Task Detail"><TaskDetailPanel taskId={taskDetailPanel} /></ErrorBoundary>}
       <Toast />
     </div>
   );
@@ -87,8 +90,6 @@ function AppRouter() {
   const { token, initialized, user } = useSelector(s => s.auth);
 
   useEffect(() => {
-    // Only call loadUser on page refresh (token exists but user not in Redux yet)
-    // After fresh login, initialized=true so this is skipped
     if (token && !user && !initialized) dispatch(loadUser());
   }, [token, dispatch, user, initialized]);
 

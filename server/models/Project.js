@@ -38,4 +38,10 @@ projectSchema.pre('save', function(next) {
   next();
 });
 
+// ── Indexes ───────────────────────────────────────────────────────────────────
+projectSchema.index({ owner: 1 });                         // getAllProjects, deleteProject, addMember
+projectSchema.index({ 'members.user': 1 });                // getAllProjects member lookup
+projectSchema.index({ owner: 1, status: 1 });              // filter active projects by owner
+projectSchema.index({ 'members.user': 1, status: 1 });     // filter active projects by member
+
 module.exports = mongoose.model('Project', projectSchema);
